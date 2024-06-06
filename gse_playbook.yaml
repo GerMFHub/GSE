@@ -6,7 +6,9 @@
   gather_facts: false
   vars:
     tgt_tmp_dir: "/tmp"
-  environment: "{{ environment_vars }}"
+    ansible_user: ts3111
+    newcicsreg: CICD6100
+  # environment: "{{ environment_vars }}"
 
   tasks:
     # ##########################################################################
