@@ -1,0 +1,21 @@
+---
+
+- hosts: zos_host
+  collections:
+    - ibm.ibm_zos_core
+  gather_facts: false
+  vars:
+    tgt_tmp_dir: "/tmp"
+  environment: "{{ environment_vars }}"
+
+  tasks:
+    # ##########################################################################
+    # Generate and set temporary names for data sets
+    # ##########################################################################
+    - name: Create temp sequential data set name
+      command: "mvstmp {{ ansible_user | upper }}"
+      register: tmp_ds_seq
+    
+    - name: "Response for start new {{ newcicsreg }} region"
+      debug:
+        msg: "{{ result }}"
