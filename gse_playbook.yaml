@@ -1,10 +1,348 @@
----
-- name: Print message to localhost
-  hosts: localhost
-  tasks:
-    - name: Print a message
+tasks:
+    - name: "Check if user provided cics region name and cicsport "
+      fail:
+        msg: "Variable 'region' or 'cicsport' is blank! You need to provide CICS region name and cicsport in order to continue"
+      when: region is not defined or region == '' or cicsport is not defined or cicsport == ''
+#
+# At first stop CICS region in case it was created before and now it's restore to initial state
+#
+    - name: "STOP {{ newcicsreg }} region"
+      zos_operator:
+        cmd: 'F {{ newcicsreg }},CEMT PERFORM SHUTDOWN IMMEDIATE'
+        wait_time_s: 10
+      register: content
+
+    - name: "Response for STOP {{ newcicsreg }} region"
       debug:
-        msg: "Hello, this is a message from Ansible!"
-    - name: Print the user-supplied variable
+        msg: "{{ content }}"
+
+    - name: Delete all files in the output directory {{ cbsa_uss_dir_installjcl }}/to_target_mf/
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      delegate_to: localhost
+      with_fileglob:
+        - "{{ cbsa_uss_dir_installjcl }}/to_target_mf/*"
+        - "{{ cbsa_uss_dir_installjcl }}/to_target_mf/.*"
+      register: result
+
+    - name: Display result of copy operation
+      ansible.builtin.debug:
+        msg: "{{ result }}"
+
+    # - name: Template Jinja files and copy to another directory
+    #   hosts: localhost  # Assuming you are running this playbook locally
+    #   gather_facts: no  # No need to gather facts
+
+    - name: Create CICS {{ newcicsreg }} region STC based on requested CICS {{ cicsver_ts }} version
+      ansible.builtin.template:
+        src: "{{ cbsa_uss_dir_installjcl }}/cics_stc_jcls/CICS56.j2"
+        dest: "{{ cbsa_uss_dir_installjcl }}/to_target_mf/CICSFILE.j2"
+        force: yes
+        mode: '0775'
+      when: cicsver_ts == "TS56"
+      delegate_to: localhost
+      ignore_errors: true
+      register: copy_result
+
+    - name: Display result of copy operation
+      ansible.builtin.debug:
+        msg: "{{ copy_result }}"
+      when: copy_result is failed and cicsver_ts == "TS56"
+
+    - name: Create CICS {{ newcicsreg }} region STC based on requested CICS {{ cicsver_ts }} version
+      ansible.builtin.template:
+        src: "{{ cbsa_uss_dir_installjcl }}/cics_stc_jcls/CICS61.j2"
+        dest: "{{ cbsa_uss_dir_installjcl }}/to_target_mf/CICSFILE.j2"
+        force: yes
+        mode: '0775'
+      when: cicsver_ts == "TS61"
+      delegate_to: localhost
+      ignore_errors: true
+      register: copy_result
+
+    - name: Display result of copy operation
+      ansible.builtin.debug:
+        msg: "{{ copy_result }}"
+      when: copy_result is failed and cicsver_ts == "TS61"
+
+    - name: Create CICS {{ newcicsreg }} region STC based on requested CICS {{ cicsver_ts }} version
+      ansible.builtin.template:
+        src: "{{ cbsa_uss_dir_installjcl }}/cics_stc_jcls/CICS62.j2"
+        dest: "{{ cbsa_uss_dir_installjcl }}/to_target_mf/CICSFILE.j2"
+        force: yes
+        mode: '0775'
+      when: cicsver_ts == "TS62"
+      delegate_to: localhost
+      ignore_errors: true
+      register: copy_result
+
+    - name: Display result of copy operation
+      ansible.builtin.debug:
+        msg: "{{ copy_result }}"
+      when: copy_result is failed and cicsver_ts == "TS62"
+
+    - name: Create CICS {{ newcicsreg }} region STC based on requested CICS {{ cicsver_ts }} version
+      ansible.builtin.template:
+        src: "{{ cbsa_uss_dir_installjcl }}/installjcl/CICSTSJCL.j2"
+        dest: "{{ cbsa_uss_dir_installjcl }}/to_target_mf/{{ newcicsreg }}.j2"
+        force: yes
+        mode: '0775'
+      delegate_to: localhost
+      ignore_errors: true
+      register: copy_result
+
+    - name: Template all Jinja files in the template directory for sending to target {{ ansible_host }}
+      ansible.builtin.template:
+        src: "{{ item }}"
+        dest: "{{ cbsa_uss_dir_installjcl }}/to_target_mf/{{ item | basename | regex_replace('\\.j2$', '') }}"
+        force: yes
+      delegate_to: localhost
+      with_fileglob:
+        - "{{ cbsa_uss_dir_installjcl }}/installjcl/CICSCSD.j2"
+        - "{{ cbsa_uss_dir_installjcl }}/installjcl/CSDJOB.j2"
+        - "{{ cbsa_uss_dir_installjcl }}/installjcl/CYISYSIN.j2"
+        - "{{ cbsa_uss_dir_installjcl }}/installjcl/COPYSTC.j2"
+        - "{{ cbsa_uss_dir_installjcl }}/installjcl/DFHPLTPI.j2"
+        - "{{ cbsa_uss_dir_installjcl }}/installjcl/BANKSMDT.j2"
+
+    - name: Display result of copy operation
+      ansible.builtin.debug:
+        msg: "{{ copy_result }}"
+
+    # ##########################################################################
+    # #Create PDS to copy CBSA app install jobs from USS
+    # ##########################################################################
+    - name: "Create a PDS to store install jobs: {{ inst_hlq }}.CICS.DEPLOY"
+      zos_data_set:
+        name: "{{ inst_hlq }}.CICS.DEPLOY"
+        type: pds
+        space_primary: 15
+        space_secondary: 3
+        space_type: CYL
+        record_format: FB
+        record_length: 80
+        directory_blocks: 20
+        force: true
+      register: result
+
+    - name: Response for creating the PDS
       debug:
-        msg: "The value of user_variable is: {{ cics }}"
+        msg: "{{ result }}"
+    # ##########################################################################
+    # +-------------------------------------------------------------------------
+    - name: "Copy local directory {{ cbsa_uss_dir_installjcl }}/to_target_mf/ to {{ inst_hlq }}.CICS.DEPLOY"
+      zos_copy:
+        src: "{{ cbsa_uss_dir_installjcl }}/to_target_mf/"
+        dest: "{{ inst_hlq }}.CICS.DEPLOY"
+        encoding:
+          from: ISO8859-1
+          to: IBM-1047
+        force: true
+      register: result_copy_dir
+
+    - name: "Response for copy local directory {{ cbsa_uss_dir_installjcl }}/to_target_mf/ to {{ inst_hlq }}.CICS.DEPLOY"
+      debug:
+        var: result_copy_dir
+
+# ##############################################################################
+# deal with CICS region install
+# ##############################################################################
+
+ 
+    - name: "Delete /proj/omcics/dev/{{ newcicsreg }}/ directory if exist"
+      command: "rm -r /proj/omcics/dev/{{ newcicsreg }}"
+      ignore_errors: true
+      failed_when: "'EDC5129I No such file or directory' in error"
+      register: result
+
+    - name: Result from deletion of /proj/omcics/dev/{{ newcicsreg }}/ directory
+      debug:
+        msg: "{{ result }}"
+
+    - name: "Create the CICS region datasets: {{ inst_hlq }}.CICS.DEPLOY(CICSFILE)"
+      zos_job_submit:
+        src: "{{ inst_hlq }}.CICS.DEPLOY(CICSFILE)"
+        location: DATA_SET
+        wait_time_s: 40
+        max_rc: 4
+      ignore_errors: true
+      register: result_submit_uptime
+
+    - name: "Response for submitting JCL {{ inst_hlq }}.CICS.DEPLOY(CICSFILE)"
+      debug:
+        var: result_submit_uptime
+
+    - name: "Create the CICS CBSA app ABENDFILE & CUSTOMER VSAM datasets: {{ inst_hlq }}.CICS.DEPLOY(BANKSMDT)"
+      zos_job_submit:
+        src: "{{ inst_hlq }}.CICS.DEPLOY(BANKSMDT)"
+        location: DATA_SET
+        wait_time_s: 40
+        max_rc: 4
+      ignore_errors: true
+      register: result_submit_uptime
+
+    - name: "Response for submitting JCL {{ inst_hlq }}.CICS.DEPLOY(BANKSMDT)"
+      debug:
+        var: result_submit_uptime
+
+    - name: Delete all files in the output directory {{ cbsa_uss_dir_installjcl }}/to_target_mf/
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      delegate_to: localhost
+      with_fileglob:
+        - "{{ cbsa_uss_dir_installjcl }}/to_target_mf/*"
+        - "{{ cbsa_uss_dir_installjcl }}/to_target_mf/.*"
+      register: result
+
+    - name: Display result of copy operation
+      ansible.builtin.debug:
+        msg: "{{ result }}"
+
+    - name: Create CICS {{ newcicsreg }} SYSIN member based on requested CICS {{ cicsver_ts }} version
+      ansible.builtin.template:
+        src: "{{ cbsa_uss_dir_installjcl }}/installjcl/CICSSYIN.j2"
+        dest: "{{ cbsa_uss_dir_installjcl }}/to_target_mf/{{ newcicsreg }}.j2"
+        force: true
+        mode: '0775'
+      delegate_to: localhost
+      ignore_errors: true
+      register: copy_result
+
+    - name: "COPY cics region SYSIN file from {{ inst_hlq }}.CICS.DEPLOY(CICSSYIN) to  RSCICS.{{ newcicsreg }}.SYSIN({{ newcicsreg }})"
+      zos_copy:
+        src: "{{ cbsa_uss_dir_installjcl }}/to_target_mf/"
+        dest: "RSCICS.{{ newcicsreg }}.SYSIN"
+        # remote_src: true
+        force: true
+      register: result_submit_uptime
+
+    - name: "Response for copying JCL {{ inst_hlq }}.CICS.DEPLOY(CICSSYIN)"
+      debug:
+        var: result_submit_uptime
+
+    - name: Copy a USS sample directory to another new CICS USS directory
+      command: "cp -R /proj/omcics/dev/testliberty/ /proj/omcics/dev/{{ newcicsreg }}/"
+      ignore_errors: true
+      failed_when: "'ltpa.keys' not in error"
+      register: result
+
+    - name: Result of Copy a USS sample directory to another new CICS USS directory
+      debug:
+        msg: "{{ result }}"
+
+    - name: "Set directory /proj/omcics/dev/{{ newcicsreg }}/ permissions to 775"
+      command: "chmod -R 775 /proj/omcics/dev/{{ newcicsreg }}"
+      ignore_errors: true
+      failed_when: "'.JVMLOG' not in error and 'EDC5139I Operation not permitted' not in error"
+      register: result
+
+    - name: Result of setting permissions to new directory
+      debug:
+        msg: "{{ result }}"
+
+    # ##########################################################################
+    # Empty before files to the host
+    # ##########################################################################
+    - name: Delete all files in the output directory {{ cbsa_uss_dir_installjcl }}/to_target_mf/
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      delegate_to: localhost
+      with_fileglob:
+        - "{{ cbsa_uss_dir_installjcl }}/to_target_mf/*"
+        - "{{ cbsa_uss_dir_installjcl }}/to_target_mf/.*"
+      register: result
+
+    - name: Display result of copy operation
+      ansible.builtin.debug:
+        msg: "{{ result }}"
+
+    - name: Template all Jinja files in the template directory for sending them to {{ ansible_host }}
+      ansible.builtin.template:
+        src: "{{ item }}"
+        dest: "{{ cbsa_uss_dir_installjcl }}/to_target_mf/{{ item | basename | regex_replace('\\.j2$', '.jvmprofile') }}"
+        force: yes
+      delegate_to: localhost
+      with_fileglob:
+        - "{{ cbsa_uss_dir_installjcl }}/ussfiles/*.j2"
+
+    - name: Copy a USS LIBERTY profile to /proj/omcics/dev/{{ newcicsreg }}/rootfs/JVMProfiles/
+      zos_copy:
+        src:  "/home/tstomeg/CICS_playbooks/workdir/playbook_execs/files/to_target_mf/LIBERTY.jvmprofile"
+        dest: "/proj/omcics/dev/{{ newcicsreg }}/rootfs/JVMProfiles/LIBERTY.jvmprofile"
+        encoding:
+          from: ISO8859-1
+          to: IBM-1047
+        force: true
+        mode: '0775'
+      register: result
+
+    - name: Copy a USS LIBERTY profile to /proj/omcics/dev/{{ newcicsreg }}/rootfs/JVMProfiles/
+      debug:
+        msg: "{{ result }}"
+
+    - name: Copy a USS DFHWLP profile to /proj/omcics/dev/{{ newcicsreg }}/rootfs/JVMProfiles/
+      zos_copy:
+        src:  "/home/tstomeg/CICS_playbooks/workdir/playbook_execs/files/to_target_mf/DFHWLP.jvmprofile"
+        dest: "/proj/omcics/dev/{{ newcicsreg }}/rootfs/JVMProfiles/DFHWLP.jvmprofile"
+        encoding:
+          from: ISO8859-1
+          to: IBM-1047
+        force: true
+        mode: '0775'
+      register: result
+
+    - name: Copy a USS DFHWLP profile to /proj/omcics/dev/{{ newcicsreg }}/rootfs/JVMProfiles/
+      debug:
+        msg: "{{ result }}"
+
+    - name: "Create the CICS region datasets: {{ inst_hlq }}.CICS.DEPLOY(CICSCSD)"
+      zos_job_submit:
+        src: "{{ inst_hlq }}.CICS.DEPLOY(CICSCSD)"
+        location: DATA_SET
+        wait_time_s: 40
+        max_rc: 4
+      ignore_errors: true
+      register: result_submit_uptime
+
+    - name: "Response for submitting JCL {{ inst_hlq }}.CICS.DEPLOY(CICSCSD)"
+      debug:
+        var: result_submit_uptime
+
+
+    - name: "COPY cics region TABLESRC file from {{ inst_hlq }}.CICS.DEPLOY(DFHPLTPI) to  RSCICS.{{ newcicsreg }}.TABLESRC(DFHPLTPI)"
+      zos_copy:
+        src: "{{ inst_hlq }}.CICS.DEPLOY(DFHPLTPI)"
+        dest: "RSCICS.{{ newcicsreg }}.TABLESRC(DFHPLTPI)"
+        remote_src: true
+        force: true
+      register: result_submit_uptime
+
+    - name: "Response for submitting JCL {{ inst_hlq }}.CICS.DEPLOY({{ newcicsreg }})"
+      debug:
+        var: result_submit_uptime
+
+
+    - name: "Populate ROCKET.USER.PROCLIB dataset with {{ newcicsreg }} STC"
+      zos_job_submit:
+        src: "{{ inst_hlq }}.CICS.DEPLOY(COPYSTC)"
+        location: DATA_SET
+        wait_time_s: 40
+        max_rc: 4
+      register: result_submit_uptime
+
+    - name: "Response for submitting JCL {{ inst_hlq }}.CICS.DEPLOY(COPYSTC)"
+      debug:
+        var: result_submit_uptime
+
+    - name: "Start new {{ newcicsreg }} region"
+      zos_operator:
+        cmd: 'S {{ newcicsreg }}'
+        wait_time_s: 10
+      register: result
+
+    - name: "Response for start new {{ newcicsreg }} region"
+      debug:
+        msg: "{{ result }}"
